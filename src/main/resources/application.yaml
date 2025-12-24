@@ -1,0 +1,62 @@
+# 服务器配置
+server:
+  port: 8080 # 网关服务端口，所有Meilisearch请求通过该端口转发
+
+# Spring配置
+spring:
+  application:
+    name: meilisearch-gateway # 应用名
+  cloud:
+    gateway:
+      # 网关路由配置
+      routes:
+        - id: meilisearch_route # 路由唯一ID
+          uri: lb://meilisearch-service # 负载均衡目标服务
+          predicates:
+            - Path=/** # 匹配所有路径请求
+#          filters:
+            # 移除错误的Resilience4J过滤器配置，改为通过自定义全局过滤器实现限流熔断
+#            - name: RewritePath # 可选：如果需要路径重写可保留，无则删除
+#              args:
+#                regexp: "/(?<path>.*)"
+#                replacement: "/${path}"
+
+# Resilience4j配置：限流+熔断（核心配置，优先配置文件实现）
+resilience4j:
+  # 熔断配置
+  circuitbreaker:
+    instances:
+      meilisearchCircuitBreaker: # 熔断实例名，与网关过滤器绑定
+        failureRateThreshold: 50 # 失败率阈值：超过50%则打开断路器
+        slidingWindowSize: 20 # 滑动窗口大小：统计20个请求的失败率
+        slidingWindowType: COUNT_BASED # 滑动窗口类型：基于请求数（另一种是TIME_BASED）
+        minimumNumberOfCalls: 5 # 最小调用数：至少5次调用后才计算失败率
+        waitDurationInOpenState: 60s # 断路器打开状态持续时间：60秒后进入半开状态
+        permittedNumberOfCallsInHalfOpenState: 3 # 半开状态允许的调用数：最多3个测试请求
+        recordExceptions: # 记录为失败的异常类型
+          - java.lang.Exception # 所有异常均视为失败
+        ignoreExceptions: # 忽略的异常类型（此处无）
+          - java.lang.IllegalArgumentException
+  # 限流配置
+  ratelimiter:
+    instances:
+      meilisearchRateLimiter: # 限流实例名，与网关过滤器绑定
+        limitRefreshPeriod: 1s # 令牌桶刷新周期：1秒
+        limitForPeriod: 20 # 每个刷新周期的令牌数：每秒允许20个请求
+        timeoutDuration: 500ms # 获取令牌的超时时间：500毫秒内未获取到则拒绝
+        registerHealthIndicator: true # 注册健康指示器，可通过Actuator监控
+
+# Actuator配置（可选，用于监控限流/熔断状态）
+#management:
+#  endpoints:
+#    web:
+#      exposure:
+#        include: circuitbreakers, ratelimiters # 暴露熔断和限流的监控端点
+#  endpoint:
+#    circuitbreakers:
+#      enabled: true
+#    ratelimiters:
+#      enabled: true
+#  metrics:
+#    tags:
+#      application: ${spring.application.name}
